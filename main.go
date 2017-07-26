@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -20,8 +21,42 @@ import (
 	"syscall"
 
 	"cloud.google.com/go/pubsub"
-	"cloud.google.com/go/trace"
 )
+
+// Publish request body to a Google Cloud Pub/Sub topic.
+type pubSubHandler struct {
+	topic        string
+	pubsubClient *pubsub.Client
+}
+
+// PubSubHandler returns a request handler that publishes
+// each request body it receives to the given pub/sub topic.
+func PubSubHandler(topic string, pubsubClient *pubsub.Client) http.Handler {
+	return &pubSubHandler{topic, pubsubClient}
+}
+
+func (ph *pubSubHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	topic := ph.pubsubClient.Topic(ph.topic)
+
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		log.Println("Failed to extract message from request: %v", err)
+		http.Error(w, "Failed to extract message from request", http.StatusInternalServerError)
+		return
+	}
+
+	msgIDs, err := topic.Publish(context.Background(), &pubsub.Message{
+		Data: data,
+	}).Get(context.Background())
+
+	if err != nil {
+		log.Printf("Failed to publish message: %v", err)
+		http.Error(w, "Failed to publish message", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Published a message with a message ID: %s\n", msgIDs[0])
+}
 
 func main() {
 	projectID := os.Getenv("PROJECT_ID")
@@ -38,25 +73,12 @@ func main() {
 		log.Fatalf("TOPIC must be set and non-empty")
 	}
 
-	tctx := context.Background()
-	traceClient, err := trace.NewClient(tctx, projectID)
-	if err != nil {
-		log.Fatalf("Failed to create trace client: %v", err)
-	}
-
-	p, err := trace.NewLimitedSampler(0.1, 5)
-	if err != nil {
-		log.Fatalf("Failed to set tracing sampling policy: %v", err)
-	}
-	traceClient.SetSamplingPolicy(p)
-
-	pctx := context.Background()
-	pubsubClient, err := pubsub.NewClient(pctx, projectID)
+	pubsubClient, err := pubsub.NewClient(context.Background(), projectID)
 	if err != nil {
 		log.Fatalf("Failed to create pubsub client: %v", err)
 	}
 
-	http.Handle("/pubsub", PubSubHandler(topic, pubsubClient, traceClient))
+	http.Handle("/", PubSubHandler(topic, pubsubClient))
 
 	server := &http.Server{Addr: ":8080"}
 	go func() {

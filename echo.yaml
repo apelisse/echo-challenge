@@ -1,0 +1,39 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: echo
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: echo
+      name: echo
+    spec:
+      containers:
+        - name: echo
+          image: "gcr.io/apelisse-test/echo"
+          ports:
+          - name: echo-port
+            containerPort: 80
+          env:
+          - name: "PROJECT_ID"
+            value: "binding/secret project id"
+          - name: "TOPIC"
+            value: "binding/secret topic"
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: "binding/secret credentials"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: echo
+  name: echo
+spec:
+  ports:
+  - name: echo-port
+    port: 80
+    targetPort: echo-port
+  selector:
+    app: echo
